@@ -1,0 +1,7 @@
+
+cd caffe
+cp Makefile.config.example Makefile.config
+make all
+make test
+make runtest
+
