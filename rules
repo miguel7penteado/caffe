@@ -75,7 +75,7 @@ autogen: $(AUTOGEN)
 
 override_dh_auto_configure: autogen
 	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
-	@echo $(AMARELO)"|Um makefile simples que compila principal.c e funcoes.c     |"$(BRANCO)
+	@echo $(AMARELO)"|Iniciando configuração do ambiente de compilação:           |"$(BRANCO)
 	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
 	@echo $(CIANO-CLARO)
 	dh_auto_configure --builddirectory=$(BUILDDIR) 	-- $(CONFFLAG_CPU)
