@@ -1,0 +1,154 @@
+#!/usr/bin/make -f
+#export DH_VERBOSE = 1
+
+VERDE="\\033[92m"
+BRANCO="\\033[0m"
+PRETO="\\033[0;30m"
+VERMELHO="\\033[0;31m"
+MARROM="\\033[0;33m"
+AZUL="\\033[0;34m"
+PURPURA="\\033[0;35m"
+CIANO="\\033[0;36m"
+CINZA-CLARO="\\033[0;37m"
+PRETO-CINZA="\\033[1;30m"
+VERMELHO-CLARO="\\033[1;31m"
+VERDE-CLARO="\\033[1;32m"
+AMARELO="\\033[1;33m"
+AZUL-CLARO="\\033[1;34m"
+PURPURA-CLARO="\\033[1;35m"
+CIANO-CLARO="\\033[1;36m"
+BRANCO-FORTE="\\033[1;37m"
+
+# Hardening Caffe according to https://wiki.debian.org/Hardening
+export DEB_BUILD_MAINT_OPTIONS   = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND   = -Wall #-pedantic
+export DEB_CXXFLAGS_MAINT_APPEND = -Wall #-pedantic
+export DEB_LDFLAGS_MAINT_APPEND  = -Wl,--as-needed
+
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+RULES         := debian/rules
+ORIG_SOURCE   := "https://github.com/BVLC/caffe/archive/rc3.tar.gz"
+CAFFE_SOVER   := 1.0.0-1
+BUILDDIR      := "caffe_cpu_build"
+
+TEMPLATES     := $(wildcard debian/*.in)
+AUTOGEN       := $(patsubst %.in,%,$(TEMPLATES))
+
+## CMake Configuration Template.
+## * PLEASE sync this common template with caffe-contrib source.
+CMAKE_CONFIGURE_TEMPLATE = \
+	-DALLOW_LMDB_NOLOCK=OFF \
+	-DBLAS="atlas" \
+	-DBUILD_SHARED_LIBS=ON \
+	-DBUILD_docs=OFF \
+	-DBUILD_matlab=OFF \
+	-DBUILD_python=ON \
+	-DBUILD_python_layer=ON \
+	-Dpython_version="3" \
+	-DCMAKE_BUILD_TYPE="Release" \
+	-DCMAKE_C_FLAGS="$(CFLAGS) $(CPPFLAGS)" \
+	-DCMAKE_CXX_FLAGS="$(CXXFLAGS) $(CPPFLAGS)" \
+	-DCMAKE_SKIP_RPATH=TRUE \
+	-DCMAKE_VERBOSE_MAKEFILE=ON \
+	-DUSE_CUDNN=OFF \
+	-DUSE_LEVELDB=ON \
+	-DUSE_LMDB=ON \
+	-DUSE_OPENCV=ON \
+	-DCPU_ONLY=$(FILL_THIS_BLANK) \
+	-DCMAKE_INSTALL_PREFIX="/usr"
+# These flags are for cuda version but please keep them
+#	-DCUDA_ARCH_NAME="All"
+#	-DCMAKE_CXX_COMPILER=g++-5
+#	-DCMAKE_C_COMPILER=gcc-5
+
+CONFFLAG_CPU = 	$(CMAKE_CONFIGURE_TEMPLATE) -DCPU_ONLY=ON
+
+%:: %.in
+	perl -p -e 's{#CAFFE_CONFIGURE#}{caffe_cpu}g;' -e 's{#CAFFE_SOVER#}{$(CAFFE_SOVER)}g;' -e 's{#DEB_HOST_MULTIARCH#}{$(DEB_HOST_MULTIARCH)}g;' < $< > $@
+
+%:
+	dh $@ --parallel --buildsystem=cmake --with python3,bash-completion
+
+.PHONY: autogen
+autogen: $(AUTOGEN)
+
+override_dh_auto_configure: autogen
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Um makefile simples que compila principal.c e funcoes.c     |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(CIANO-CLARO)
+	dh_auto_configure --builddirectory=$(BUILDDIR) 	-- $(CONFFLAG_CPU)
+
+override_dh_auto_clean:
+	dh_auto_clean --builddirectory=$(BUILDDIR)
+	-$(RM) -rf python/caffe/proto/ doxygen
+	-$(RM) python/caffe/_caffe.so
+
+override_dh_auto_build-indep:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Gerando documentação...                                     |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	doxygen .Doxyfile # we don't use BUILD_DOC provided by upstream cmake
+	$(MAKE) -C doxygen/latex/
+	sed -i -e 's/cdn.mathjax.org/127.0.0.1/g' docs/_layouts/default.html # lintian privacy
+	sed -i -e 's/code.jquery.com/127.0.0.1/g' examples/web_demo/templates/index.html # lintian privacy
+	sed -i -e 's/netdna.bootstrapcdn.com/127.0.0.1/g' examples/web_demo/templates/index.html # lintian privacy
+	find doxygen/html -name 'jquery.js' -delete # lintian embedded-javascript
+	find docs -size 0 -delete # lintian zero-byte-file
+	find docs -name '.gitignore' -delete # lintian vcs-control-file
+	gzip -d examples/finetune_flickr_style/flickr_style.csv.gz # lintian gzip timestamp
+	gzip -n ./examples/finetune_flickr_style/flickr_style.csv # ditto
+
+override_dh_auto_build-arch:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Gerando compilacao da arquitetura...                        |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)
+	dh_auto_build --builddirectory=$(BUILDDIR) -- caffe pycaffe test.testbin all
+
+# In the test phase, we need to set LD_LIBRARY_PATH properly
+# for those test ELFs linked with libcaffe.so.X
+override_dh_auto_test-arch:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Auto-teste da compilação desta arquitetura                  |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(PURPURA-CLARO)
+	dh_auto_test --builddirectory=$(BUILDDIR) -- runtest LD_LIBRARY_PATH=$(BUILDDIR)/lib/ 
+
+override_dh_auto_test-indep:
+
+override_dh_python3:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Compilacao python3...                                       |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(PURPURA)
+	dh_python3 --requires=python/requirements.txt
+	dh_numpy3
+
+override_dh_auto_install:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|INSTALANDO                                                  |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(BRANCO-FORTE)
+	dh_auto_install --builddirectory=$(BUILDDIR) -- install
+
+override_dh_makeshlibs:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Linkando bibliotecas                                        |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(BRANCO-FORTE)
+	dh_makeshlibs --package=python3-caffe-cpu -X/usr/lib/python
+	dh_makeshlibs --remaining-packages
+
+override_dh_fixperms:
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	@echo $(AMARELO)"|Ajustando permissões                                        |"$(BRANCO)
+	@echo $(VERDE)  "+************************************************************+"$(BRANCO)
+	dh_fixperms
+	chmod -x debian/tmp/usr/lib/python3/dist-packages/caffe/proto/caffe_pb2.py
+	chmod -x debian/tmp/usr/lib/python3/dist-packages/caffe/proto/__init__.py
+
+get-orig-source:
+	wget -c $(ORIG_SOURCE) -O caffe_1.0.0~rc3.orig.tar.gz
+
